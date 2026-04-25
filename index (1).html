@@ -1,0 +1,619 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0a0a0a">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="./manifest.json">
+  <title>Hybrid Athlete Tracker</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{background:#0a0a0a;color:#e8e8e8;font-family:'JetBrains Mono',monospace;-webkit-tap-highlight-color:transparent}
+    input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
+    input[type=number]{-moz-appearance:textfield}
+    ::-webkit-scrollbar{width:4px;height:4px}
+    ::-webkit-scrollbar-track{background:transparent}
+    ::-webkit-scrollbar-thumb{background:#333;border-radius:2px}
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script>
+    // Register service worker
+    if('serviceWorker' in navigator){navigator.serviceWorker.register('./sw.js').catch(()=>{})}
+  </script>
+  <script type="text/babel">
+const {useState,useEffect,useCallback} = React;
+
+// ═══════════════════════════════════════════
+// PERSISTENCE HOOKS
+// ═══════════════════════════════════════════
+function useLS(key, init) {
+  const [val, setVal] = useState(() => {
+    try { const s = localStorage.getItem(key); return s ? JSON.parse(s) : init; }
+    catch { return init; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem(key, JSON.stringify(val)); } catch {}
+  }, [key, val]);
+  return [val, setVal];
+}
+function useDailyLS(key, init) {
+  const today = new Date().toISOString().split('T')[0];
+  return useLS(key + '_' + today, init);
+}
+
+// ═══════════════════════════════════════════
+// SHARED CONSTANTS
+// ═══════════════════════════════════════════
+const S = { fontFamily: "'JetBrains Mono',monospace" };
+const MC = {
+  Chest:"#e74c3c","Chest/Tri":"#e67e22",Back:"#3498db","Back/Arms/Core":"#2980b9",
+  Shoulders:"#9b59b6",Biceps:"#1abc9c",Triceps:"#e67e22","Quads/Glutes":"#27ae60",
+  Hamstrings:"#2ecc71",Calves:"#16a085",Core:"#f39c12","Full Body":"#8e44ad",
+  Cardio:"#2ecc71",Recovery:"#555","Weak Points":"#e74c3c"
+};
+const ICONS = {
+  Chest:"🏋️","Chest/Tri":"💪",Back:"🔝","Back/Arms/Core":"🧗",
+  Shoulders:"⬆️",Biceps:"💪",Triceps:"☠️","Quads/Glutes":"🦵",
+  Hamstrings:"🔻",Calves:"🦶",Core:"🎯","Full Body":"⚡",
+  Cardio:"🏃",Recovery:"😴","Weak Points":"🔧"
+};
+const TAG_IC = {mon_am:"🏋️",mon_pm:"⚽",tue:"🦵",wed:"🏃",thu:"🧗",fri:"🏋️",sat:"🦵",sun:"😴"};
+const fmt = s => `${Math.floor(s/60)}:${(s%60).toString().padStart(2,'0')}`;
+
+// ═══════════════════════════════════════════
+// GYM TRACKER DATA
+// ═══════════════════════════════════════════
+const DAYS = {
+  mon_am:{key:"mon_am",label:"Monday AM",tag:"UPPER PUSH + ARMS",desc:"Antagonist work for climbing. Push emphasis before soccer tonight.",exercises:[
+    {id:"db_bench",name:"DB Bench Press",muscle:"Chest",sets:4,reps:"8–12",rest:90,tip:"Plant feet flat, arch slightly, lower to mid-chest. Control 2-3s down, drive up explosively."},
+    {id:"dips",name:"Dips",muscle:"Chest/Tri",sets:3,reps:"5–10",rest:90,tip:"Lean forward ~30° for chest bias. Lower until upper arm is parallel. Add weight when you hit 10."},
+    {id:"db_ohp",name:"DB Overhead Press",muscle:"Shoulders",sets:3,reps:"8–12",rest:90,tip:"Seated or standing. Press to lockout without flaring ribs."},
+    {id:"db_fly",name:"DB Flyes",muscle:"Chest",sets:3,reps:"12–15",rest:60,tip:"Slight elbow bend, big stretch, squeeze at top. Light weight, feel it."},
+    {id:"db_skull",name:"DB Skull Crushers",muscle:"Triceps",sets:3,reps:"10–12",rest:60,tip:"Lower to temples, 3s eccentric. Important for climbing antagonist balance."},
+    {id:"db_curls",name:"DB Curls",muscle:"Biceps",sets:3,reps:"10–12",rest:60,tip:"No swinging. Pin elbows, full extension, squeeze at top."},
+    {id:"db_lat_raise",name:"DB Lateral Raises",muscle:"Shoulders",sets:3,reps:"15–20",rest:45,tip:"Light weight, high reps. Lead with pinkies, shoulder height. Builds capped shoulders."},
+    {id:"core_mon",name:"Core Finisher",muscle:"Core",sets:2,reps:"45s each",rest:30,tip:"Plank 45s → dead bugs 10 each → bicycle crunches 20."},
+  ]},
+  mon_pm:{key:"mon_pm",label:"Monday PM",tag:"SOCCER",desc:"Lower body conditioning + cardio.",exercises:[
+    {id:"soccer",name:"Soccer",muscle:"Full Body",sets:1,reps:"90 min",rest:0,tip:"Hydrate well. Dynamic warm-up before. Counts as lower body cardio."},
+  ]},
+  tue:{key:"tue",label:"Tuesday",tag:"LOWER BODY + CORE",desc:"Direct leg strength. Strong legs = better surf pop-ups, climbing footwork, injury prevention.",exercises:[
+    {id:"db_goblet",name:"DB Goblet Squat",muscle:"Quads/Glutes",sets:4,reps:"10–12",rest:90,tip:"Hold DB at chest, sit deep below parallel. Pause 1s at bottom."},
+    {id:"db_rdl",name:"DB Romanian Deadlift",muscle:"Hamstrings",sets:4,reps:"10–12",rest:90,tip:"Soft knees, hinge at hips, feel hamstring stretch, squeeze glutes to stand."},
+    {id:"db_lunge",name:"DB Walking Lunges",muscle:"Quads/Glutes",sets:3,reps:"10 each",rest:90,tip:"Long stride, back knee kisses ground. Great single-leg stability."},
+    {id:"db_calf",name:"DB Calf Raises",muscle:"Calves",sets:3,reps:"15–20",rest:45,tip:"Step edge for full range. 2s squeeze at top. Calves need high reps."},
+    {id:"hang_leg",name:"Hanging Leg Raises",muscle:"Core",sets:3,reps:"10–15",rest:60,tip:"Hang from bar, raise to 90°+. No swinging. Transfers to climbing body tension."},
+    {id:"plank",name:"Plank Variations",muscle:"Core",sets:3,reps:"30–45s",rest:45,tip:"Front → side L → side R. Side planks are gold for climbing."},
+  ]},
+  wed:{key:"wed",label:"Wednesday",tag:"5KM INTERVALS",desc:"Shorter, harder, more muscle-sparing than 10km. Builds speed and VO2max.",exercises:[
+    {id:"run_intervals",name:"5km Interval Run",muscle:"Cardio",sets:1,reps:"5km",rest:0,tip:"1km warm up → 6-8×400m hard with 200m jog → 1km cool down."},
+  ]},
+  thu:{key:"thu",label:"Thursday",tag:"CLIMB",desc:"This IS your pull day. Back, biceps, grip, core all get hammered.",exercises:[
+    {id:"climb",name:"Climbing Session",muscle:"Back/Arms/Core",sets:1,reps:"60–90 min",rest:0,tip:"Warm up easy grades. Rest 2-3 min between hard problems. Focus on footwork."},
+  ]},
+  fri:{key:"fri",label:"Friday",tag:"FULL UPPER",desc:"Balanced push + pull. 48hrs post-climb. Lighter pull volume.",exercises:[
+    {id:"pullups_f",name:"Pull-Ups",muscle:"Back",sets:3,reps:"AMRAP",rest:120,tip:"Full dead hang to chin over bar. If wrecked from climbing, do 3×5 strict."},
+    {id:"db_rows_f",name:"DB Rows",muscle:"Back",sets:3,reps:"10–12",rest:90,tip:"One arm, brace on bench. Pull to hip, squeeze lat 1s."},
+    {id:"db_bench_f",name:"DB Bench Press",muscle:"Chest",sets:3,reps:"8–12",rest:90,tip:"Second bench this week. Slower tempo — 3s down, 1s pause, explode up."},
+    {id:"dips_f",name:"Dips",muscle:"Chest/Tri",sets:3,reps:"6–10",rest:90,tip:"If shoulders beat from climbing, swap to close-grip DB press."},
+    {id:"db_ohp_f",name:"DB Overhead Press",muscle:"Shoulders",sets:3,reps:"8–12",rest:90,tip:"Builds push strength climbing neglects. Strong shoulders = injury-proof."},
+    {id:"db_curls_f",name:"DB Hammer Curls",muscle:"Biceps",sets:2,reps:"10–12",rest:60,tip:"Hammer grip hits brachioradialis — forearm endurance for climbing."},
+    {id:"db_lat_f",name:"DB Lateral Raises",muscle:"Shoulders",sets:3,reps:"15–20",rest:45,tip:"Partial reps at end when you can't do full range — that's where caps grow."},
+    {id:"db_rear_f",name:"DB Rear Delt Flyes",muscle:"Shoulders",sets:3,reps:"15–20",rest:45,tip:"Bent 45°, squeeze shoulder blades. Critical for 3D shoulders and climbing health."},
+    {id:"core_fri",name:"Core Finisher",muscle:"Core",sets:2,reps:"45s each",rest:30,tip:"Hanging knee raises 10-15 → Russian twists 20 → hollow body 30s."},
+  ]},
+  sat:{key:"sat",label:"Saturday",tag:"LOWER + SHOULDERS",desc:"Second leg day. Shoulders get extra volume. This session separates decent from ripped.",exercises:[
+    {id:"db_goblet_s",name:"DB Goblet Squat",muscle:"Quads/Glutes",sets:4,reps:"8–10",rest:90,tip:"Heavier than Tuesday. Pause 2s bottom. Hold two DBs at shoulders for front squat if easy."},
+    {id:"db_rdl_s",name:"DB Romanian Deadlift",muscle:"Hamstrings",sets:3,reps:"10–12",rest:90,tip:"Second hamstring hit. Strong hamstrings prevent knee injuries from all your sports."},
+    {id:"db_split_s",name:"DB Bulgarian Split Squat",muscle:"Quads/Glutes",sets:3,reps:"8 each",rest:90,tip:"Rear foot on bench. Brutal but builds single-leg strength like nothing else."},
+    {id:"db_ohp_s",name:"DB Overhead Press",muscle:"Shoulders",sets:3,reps:"8–12",rest:90,tip:"Third pressing session. If fatigued, go seated and lighter."},
+    {id:"db_lat_s",name:"DB Lateral Raises",muscle:"Shoulders",sets:3,reps:"15–20",rest:45,tip:"Drop sets work great here — 15 normal, immediately lighter for 10 more."},
+    {id:"db_rear_s",name:"DB Rear Delt Flyes",muscle:"Shoulders",sets:3,reps:"15–20",rest:45,tip:"Round 3D shoulder look. Also stabilises every climbing pull."},
+    {id:"core_sat",name:"Core Finisher",muscle:"Core",sets:2,reps:"45s each",rest:30,tip:"Weighted plank 45s → hanging leg raises 10 → side planks 30s each."},
+  ]},
+  sun:{key:"sun",label:"Sunday",tag:"REST / ACTIVE RECOVERY",desc:"Non-negotiable recovery day. Easy surf or walk max.",exercises:[
+    {id:"sun_surf",name:"Easy Surf",muscle:"Full Body",sets:1,reps:"Session",rest:0,tip:"Dawn patrol on the longboard. Keep it cruisy. Active recovery not training."},
+    {id:"sun_walk",name:"Walk / Stretch",muscle:"Recovery",sets:1,reps:"30–45 min",rest:0,tip:"Walk, foam roll, stretch. Focus hip flexors, shoulders, thoracic spine."},
+    {id:"sun_rest",name:"Full Rest",muscle:"Recovery",sets:1,reps:"—",rest:0,tip:"Best option. Sleep in, eat quality protein, hydrate. 8+ hours sleep."},
+  ]},
+};
+
+const DAY_ORDER=["mon_am","mon_pm","tue","wed","thu","fri","sat","sun"];
+const WEEK_MODES=[
+  {id:"normal",label:"Normal",icon:"📋"},
+  {id:"camping",label:"Camping",icon:"⛺"},
+  {id:"travel",label:"Travel",icon:"✈️"},
+  {id:"deload",label:"Deload",icon:"🔄"},
+];
+const MODE_GYM={normal:["mon_am","tue","fri","sat"],camping:["mon_am","tue","fri","sat"],travel:["mon_am","tue","fri"],deload:["mon_am","tue","fri","sat"]};
+const MODE_ICONS={camping:{sat:"⛺",sun:"🥾"},travel:{mon_am:"💪",mon_pm:"🚶",tue:"🦵",wed:"🏃",thu:"🧘",fri:"💪",sat:"✈️",sun:"😴"}};
+
+const MODE_OVERRIDES={
+  camping:{
+    fri:{key:"fri",label:"Friday",tag:"UPPER + LOWER COMBO",desc:"Saturday gone — compress leg work into Friday.",exercises:[
+      {id:"pullups_f",name:"Pull-Ups",muscle:"Back",sets:3,reps:"AMRAP",rest:120,tip:"Quick sets."},
+      {id:"db_bench_f",name:"DB Bench Press",muscle:"Chest",sets:3,reps:"8–12",rest:90,tip:"Standard bench."},
+      {id:"db_ohp_f",name:"DB Overhead Press",muscle:"Shoulders",sets:3,reps:"8–12",rest:90,tip:"Covers Saturday's missed shoulder work."},
+      {id:"dips_f",name:"Dips",muscle:"Chest/Tri",sets:3,reps:"6–10",rest:90,tip:"Push hard."},
+      {id:"db_goblet_cf",name:"DB Goblet Squat",muscle:"Quads/Glutes",sets:4,reps:"10–12",rest:90,tip:"Covering Saturday's leg day. Go heavy."},
+      {id:"db_split_cf",name:"DB Bulgarian Split Squat",muscle:"Quads/Glutes",sets:3,reps:"8 each",rest:90,tip:"Non-negotiable — don't skip."},
+      {id:"db_rdl_cf",name:"DB Romanian Deadlift",muscle:"Hamstrings",sets:3,reps:"10–12",rest:90,tip:"Quick hamstring work."},
+    ]},
+    sat:{key:"sat",label:"Saturday",tag:"CAMPING — BODYWEIGHT",desc:"20-min bodyweight circuit. Find a table, branch, or railing.",exercises:[
+      {id:"camp_pu",name:"Push-Ups",muscle:"Chest",sets:3,reps:"15–20",rest:45,tip:"Wide, standard, diamond across sets."},
+      {id:"camp_dip",name:"Table Dips",muscle:"Chest/Tri",sets:3,reps:"10–15",rest:45,tip:"Picnic table or sturdy surface."},
+      {id:"camp_row",name:"Inverted Rows",muscle:"Back",sets:3,reps:"10–12",rest:60,tip:"Low branch or table edge."},
+      {id:"camp_sq",name:"Jump Squats",muscle:"Quads/Glutes",sets:3,reps:"15",rest:60,tip:"Deep squat, explode. Soft landing."},
+      {id:"camp_lu",name:"Walking Lunges",muscle:"Quads/Glutes",sets:3,reps:"12 each",rest:60,tip:"Add a backpack for weight."},
+      {id:"camp_core",name:"Plank + Bear Crawl",muscle:"Core",sets:2,reps:"30s + 10m",rest:45,tip:"30s plank then bear crawl 10m."},
+    ]},
+    sun:{key:"sun",label:"Sunday",tag:"HIKING / RECOVERY",desc:"Let camping be the workout.",exercises:[
+      {id:"camp_hike",name:"Hike / Explore",muscle:"Full Body",sets:1,reps:"Session",rest:0,tip:"Hiking with a pack = loaded carries + cardio."},
+      {id:"camp_rest",name:"Full Rest",muscle:"Recovery",sets:1,reps:"—",rest:0,tip:"Sit by the fire. Rest earned."},
+    ]},
+  },
+  travel:{
+    mon_am:{key:"mon_am",label:"Monday",tag:"BODYWEIGHT UPPER",desc:"Push-ups, dips on furniture, pike push-ups. Anywhere.",exercises:[
+      {id:"tr_pu",name:"Push-Up Variations",muscle:"Chest",sets:4,reps:"12–20",rest:60,tip:"Wide → standard → diamond → decline. Slow eccentrics."},
+      {id:"tr_dip",name:"Chair Dips",muscle:"Chest/Tri",sets:3,reps:"12–15",rest:60,tip:"Two chairs or desk edge. Full depth."},
+      {id:"tr_pike",name:"Pike Push-Ups",muscle:"Shoulders",sets:3,reps:"8–12",rest:60,tip:"Feet on bed, inverted V. Best bodyweight shoulder press."},
+      {id:"tr_row",name:"Doorframe Rows",muscle:"Back",sets:3,reps:"12–15",rest:60,tip:"Grab doorframe sides, lean back, pull in."},
+      {id:"tr_core",name:"Core Circuit",muscle:"Core",sets:2,reps:"60s",rest:30,tip:"Plank 30s → mountain climbers 15ea → dead bugs 10ea."},
+    ]},
+    mon_pm:{key:"mon_pm",label:"Monday PM",tag:"REST / WALK",desc:"No soccer. Walk and explore.",exercises:[
+      {id:"tr_walk",name:"Walk / Explore",muscle:"Recovery",sets:1,reps:"30–60 min",rest:0,tip:"Sightseeing IS active recovery."},
+    ]},
+    tue:{key:"tue",label:"Tuesday",tag:"BODYWEIGHT LOWER",desc:"Single-leg work doesn't need equipment.",exercises:[
+      {id:"tr_sq",name:"Tempo BW Squats",muscle:"Quads/Glutes",sets:4,reps:"15–20",rest:60,tip:"5s down, 2s pause, explode up. Add backpack for load."},
+      {id:"tr_lu",name:"Reverse Lunges",muscle:"Quads/Glutes",sets:3,reps:"12 each",rest:60,tip:"Step back, not forward. Easier on knees."},
+      {id:"tr_rdl",name:"Single-Leg RDL",muscle:"Hamstrings",sets:3,reps:"10 each",rest:60,tip:"Balance + hamstring work. Touch ground each rep."},
+      {id:"tr_calf",name:"Single-Leg Calf Raises",muscle:"Calves",sets:3,reps:"15 each",rest:30,tip:"Step edge. Full range, pause at top."},
+      {id:"tr_gb",name:"Glute Bridges",muscle:"Quads/Glutes",sets:3,reps:"15–20",rest:45,tip:"Single-leg for difficulty. Backpack on hips for load."},
+      {id:"tr_core2",name:"Core Circuit",muscle:"Core",sets:2,reps:"60s",rest:30,tip:"Side planks 30s ea + hollow body 30s + leg raises 15."},
+    ]},
+    wed:{key:"wed",label:"Wednesday",tag:"RUN / EXPLORE",desc:"Run somewhere new. 3-5km.",exercises:[
+      {id:"tr_run",name:"Easy Run",muscle:"Cardio",sets:1,reps:"3–5km",rest:0,tip:"Explore the area. 20-30 min, no pace stress."},
+    ]},
+    thu:{key:"thu",label:"Thursday",tag:"REST / MOBILITY",desc:"No climbing. True recovery day.",exercises:[
+      {id:"tr_stretch",name:"Mobility / Stretch",muscle:"Recovery",sets:1,reps:"20–30 min",rest:0,tip:"Hip flexors, shoulders, thoracic spine. YouTube a 20-min yoga flow."},
+    ]},
+    fri:{key:"fri",label:"Friday",tag:"BODYWEIGHT FULL",desc:"One last session. In and out in 30 min.",exercises:[
+      {id:"tr_pu2",name:"Push-Up Variations",muscle:"Chest",sets:3,reps:"15–20",rest:45,tip:"Mix grips. Slow and controlled."},
+      {id:"tr_pike2",name:"Pike Push-Ups",muscle:"Shoulders",sets:3,reps:"8–12",rest:60,tip:"Feet elevated for extra difficulty."},
+      {id:"tr_row2",name:"Table Rows",muscle:"Back",sets:3,reps:"12–15",rest:60,tip:"Under a sturdy table. Pull chest to edge."},
+      {id:"tr_jsq",name:"Jump Squats",muscle:"Quads/Glutes",sets:3,reps:"15",rest:60,tip:"Deep, explosive, soft landing."},
+      {id:"tr_lu2",name:"Walking Lunges",muscle:"Quads/Glutes",sets:3,reps:"10 each",rest:60,tip:"Long strides."},
+      {id:"tr_core3",name:"Core Finisher",muscle:"Core",sets:2,reps:"60s",rest:30,tip:"Plank 30s → bicycle crunches 20 → dead bugs 10ea."},
+    ]},
+    sat:{key:"sat",label:"Saturday",tag:"TRAVEL / REST",desc:"Walk, stretch, eat well.",exercises:[
+      {id:"tr_rest_s",name:"Walk / Rest",muscle:"Recovery",sets:1,reps:"Session",rest:0,tip:"Stay active but don't force it."},
+    ]},
+    sun:{key:"sun",label:"Sunday",tag:"REST",desc:"Reset for Monday.",exercises:[
+      {id:"tr_rest_u",name:"Full Rest",muscle:"Recovery",sets:1,reps:"—",rest:0,tip:"Normal program tomorrow. 8+ hours sleep."},
+    ]},
+  },
+};
+
+function deloadDay(d){return{...d,tag:d.tag+" (DELOAD)",desc:"Deload: same exercises, 60% volume. Focus form and recovery.",exercises:d.exercises.map(e=>({...e,sets:Math.max(1,Math.round(e.sets*0.6)),tip:e.tip+" — DELOAD: lighter effort, no grinding."}))};}
+
+// ═══════════════════════════════════════════
+// GYM TRACKER COMPONENT
+// ═══════════════════════════════════════════
+function GymTracker() {
+  const [weekMode, setWeekMode] = useLS('gym_weekMode', 'normal');
+  const [activeDay, setActiveDay] = useState(() => {
+    const d = new Date().getDay();
+    return {0:"sun",1:"mon_am",2:"tue",3:"wed",4:"thu",5:"fri",6:"sat"}[d];
+  });
+  const [sets, setSets] = useLS('gym_sets', {});
+  const [adding, setAdding] = useState(null);
+  const [weight, setWeight] = useState('');
+  const [reps, setReps] = useState('');
+  const [showTip, setShowTip] = useState(null);
+  const [view, setView] = useState('plan');
+  const [restOn, setRestOn] = useState(false);
+  const [restSec, setRestSec] = useState(0);
+  const [restTarget, setRestTarget] = useState(90);
+  const [restExName, setRestExName] = useState('');
+
+  useEffect(() => { if(!restOn) return; const i=setInterval(()=>setRestSec(s=>s+1),1000); return ()=>clearInterval(i); }, [restOn]);
+
+  const getDay = dk => weekMode==='deload' ? deloadDay(DAYS[dk]) : (MODE_OVERRIDES[weekMode]?.[dk] || DAYS[dk]);
+  const getIcon = dk => MODE_ICONS[weekMode]?.[dk] || TAG_IC[dk];
+  const gymDays = MODE_GYM[weekMode] || MODE_GYM.normal;
+
+  const day = getDay(activeDay);
+  const daySets = sets[activeDay] || [];
+  const isGym = gymDays.includes(activeDay);
+
+  const logSet = exId => {
+    if(!reps && isGym) return;
+    setSets(p => ({...p, [activeDay]: [...(p[activeDay]||[]), {id:Date.now(),exercise:exId,weight:parseFloat(weight)||0,reps:reps||'✓',ts:Date.now()}]}));
+    setAdding(null); setWeight(''); setReps('');
+    const ex = day.exercises.find(e=>e.id===exId);
+    if(ex?.rest>0){setRestOn(true);setRestSec(0);setRestTarget(ex.rest);setRestExName(ex.name);}
+  };
+  const del = id => setSets(p => ({...p,[activeDay]:(p[activeDay]||[]).filter(s=>s.id!==id)}));
+  const sFor = exId => daySets.filter(s=>s.exercise===exId);
+
+  const prog = day.exercises.reduce((s,e)=>s+Math.min(sFor(e.id).length,e.sets),0);
+  const total = day.exercises.reduce((s,e)=>s+e.sets,0);
+  const pct = total>0?Math.round(prog/total*100):0;
+  const vol = daySets.reduce((s,x)=>s+(parseFloat(x.weight)||0)*(parseInt(x.reps)||0),0);
+
+  const getMotivation = () => {
+    if(daySets.length===0) return null;
+    const seed = Math.floor((daySets[0]?.ts||0)/100000);
+    if(pct===100){const m=["Full session crushed. Recovery starts now — eat big, sleep hard. 🔥","100% done. That discipline compounds week after week. 💪","Every set done. Your future self thanks you. 👑","Session complete. Protein shake time. 🏆"];return m[seed%m.length];}
+    if(pct>=70){const m=["Solid session. Key movements nailed — that's what matters. 💪","Most of the work done. Gains come from the compounds you hit. 👊"];return m[seed%m.length];}
+    if(pct>=40){const m=["Half a workout beats no workout every single time. 🤙","Short session but you still trained. Consistency over perfection. 💪","Progress isn't linear. Shorter today keeps momentum for next time. 🔥"];return m[seed%m.length];}
+    const m=["You showed up. That's the hardest part. Even a few sets keep the habit alive. 🤙","Light day? No stress. One set is infinitely better than zero. 💪"];return m[seed%m.length];
+  };
+  const mot = getMotivation();
+
+  const weekProg = DAY_ORDER.reduce((acc,dk)=>{const d=getDay(dk);const ds=sets[dk]||[];const p=d.exercises.reduce((s,e)=>s+Math.min(ds.filter(x=>x.exercise===e.id).length,e.sets),0);const t=d.exercises.reduce((s,e)=>s+e.sets,0);acc[dk]={done:p,total:t};return acc;},{});
+
+  return (
+    <div style={{padding:'14px 12px',maxWidth:480,margin:'0 auto'}}>
+      {/* Week mode */}
+      <div style={{display:'flex',gap:6,marginBottom:10}}>
+        {WEEK_MODES.map(m=>(
+          <button key={m.id} onClick={()=>setWeekMode(m.id)} style={{flex:1,padding:'8px 4px',borderRadius:8,cursor:'pointer',...S,textAlign:'center',background:weekMode===m.id?'#1a1a1a':'transparent',border:weekMode===m.id?'1px solid #e74c3c44':'1px solid #1a1a1a',color:weekMode===m.id?'#fff':'#444'}}>
+            <div style={{fontSize:14}}>{m.icon}</div>
+            <div style={{fontSize:9,marginTop:2}}>{m.label}</div>
+          </button>
+        ))}
+      </div>
+
+      {/* Day selector */}
+      <div style={{display:'flex',gap:6,overflowX:'auto',paddingBottom:8,marginBottom:12,WebkitOverflowScrolling:'touch'}}>
+        {DAY_ORDER.map(dk=>{const d=getDay(dk);const a=activeDay===dk;const wp=weekProg[dk];const done=wp.total>0&&wp.done>=wp.total;
+          return(<button key={dk} onClick={()=>{setActiveDay(dk);setAdding(null);setShowTip(null);setView('plan');}} style={{flexShrink:0,padding:'8px 12px',borderRadius:10,border:a?'1px solid #333':'1px solid transparent',cursor:'pointer',...S,background:a?'#1a1a1a':'transparent',textAlign:'center',minWidth:56}}>
+            <div style={{fontSize:16,marginBottom:2}}>{getIcon(dk)}</div>
+            <div style={{fontSize:10,color:a?'#fff':'#555',fontWeight:a?700:400}}>{d.label.replace(/Monday/,'Mon').replace(/Tuesday/,'Tue').replace(/Wednesday/,'Wed').replace(/Thursday/,'Thu').replace(/Friday/,'Fri').replace(/Saturday/,'Sat').replace(/Sunday/,'Sun')}</div>
+            {wp.total>0&&<div style={{marginTop:3,height:2,background:'#222',borderRadius:1,overflow:'hidden'}}><div style={{height:'100%',width:`${wp.done/wp.total*100}%`,background:done?'#27ae60':'#e74c3c',transition:'width .3s'}}/></div>}
+          </button>);
+        })}
+      </div>
+
+      {/* Day header */}
+      <div style={{marginBottom:14}}>
+        <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4}}>
+          <span style={{fontSize:22}}>{getIcon(activeDay)}</span>
+          <div><div style={{fontSize:10,letterSpacing:2,color:MC[day.exercises[0]?.muscle]||'#e74c3c',textTransform:'uppercase'}}>{day.tag}</div><div style={{fontSize:18,fontWeight:700,color:'#fff'}}>{day.label}</div></div>
+          {isGym&&<div style={{marginLeft:'auto',fontSize:12,color:'#555'}}>{prog}/{total}</div>}
+        </div>
+        <div style={{fontSize:11,color:'#666',lineHeight:1.5}}>{day.desc}</div>
+        {isGym&&<div style={{marginTop:8,height:3,background:'#1a1a1a',borderRadius:2,overflow:'hidden'}}><div style={{height:'100%',width:`${pct}%`,borderRadius:2,background:pct===100?'#27ae60':'linear-gradient(90deg,#e74c3c,#e67e22)',transition:'width .4s'}}/></div>}
+      </div>
+
+      {/* Rest timer */}
+      {restOn&&(
+        <div style={{marginBottom:12,padding:'10px 14px',borderRadius:8,border:`1px solid ${restSec>=restTarget?'#27ae6044':'#e67e2233'}`,background:restSec>=restTarget?'#0a1a0a':'#111'}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
+            <div><span style={{fontSize:10,color:'#777',letterSpacing:1}}>REST </span><span style={{fontSize:10,color:'#555'}}>— {restExName}</span></div>
+            <button onClick={()=>{setRestOn(false);setRestSec(0);}} style={{background:'none',border:'1px solid #333',color:'#777',padding:'3px 10px',borderRadius:4,cursor:'pointer',fontSize:10,...S}}>✕</button>
+          </div>
+          <div style={{display:'flex',alignItems:'center',gap:12}}>
+            <span style={{fontSize:28,fontWeight:700,fontVariantNumeric:'tabular-nums',color:restSec>=restTarget?'#27ae60':restSec>=restTarget*.7?'#e67e22':'#fff'}}>{fmt(restSec)}</span>
+            <div style={{flex:1}}>
+              <div style={{height:4,background:'#1a1a1a',borderRadius:2,overflow:'hidden'}}><div style={{height:'100%',borderRadius:2,transition:'width .3s',width:`${Math.min(restSec/restTarget*100,100)}%`,background:restSec>=restTarget?'#27ae60':'linear-gradient(90deg,#e67e22,#e74c3c)'}}/></div>
+              <div style={{fontSize:9,color:'#555',marginTop:3,display:'flex',justifyContent:'space-between'}}><span>{restSec>=restTarget?'✓ Go when ready':`${restTarget-restSec}s until target`}</span><span>{restTarget}s</span></div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Tabs */}
+      {isGym&&<div style={{display:'flex',marginBottom:14,borderBottom:'1px solid #1a1a1a'}}>{['plan','log','summary'].map(t=>(<button key={t} onClick={()=>setView(t)} style={{flex:1,padding:'8px 0',background:'none',border:'none',...S,color:view===t?'#fff':'#444',fontSize:10,letterSpacing:2,textTransform:'uppercase',cursor:'pointer',borderBottom:view===t?'2px solid #e74c3c':'2px solid transparent'}}>{t}</button>))}</div>}
+
+      {/* Plan view */}
+      {(view==='plan'||!isGym)&&day.exercises.map(ex=>{
+        const done=sFor(ex.id).length;const comp=isGym&&done>=ex.sets;const open=adding===ex.id;const tipOpen=showTip===ex.id;const c=MC[ex.muscle]||'#555';const ic=ICONS[ex.muscle]||'•';
+        return(<div key={ex.id} style={{background:'#111',borderRadius:10,overflow:'hidden',borderLeft:`3px solid ${comp?'#27ae6088':c}`,opacity:comp?.5:1,marginBottom:6}}>
+          <div style={{padding:'12px 14px',display:'flex',alignItems:'center',gap:10}}>
+            <span style={{fontSize:18,width:24,textAlign:'center'}}>{comp?'✅':ic}</span>
+            <div style={{flex:1,cursor:isGym?'pointer':'default'}} onClick={()=>!comp&&isGym&&setAdding(open?null:ex.id)}>
+              <div style={{display:'flex',alignItems:'center',gap:6}}><span style={{fontSize:13,fontWeight:600,color:comp?'#555':'#ddd'}}>{ex.name}</span><span style={{fontSize:8,padding:'2px 6px',borderRadius:10,background:`${c}22`,color:c}}>{ex.muscle}</span></div>
+              {isGym&&<div style={{fontSize:10,color:'#555',marginTop:2}}>{ex.sets}×{ex.reps} · {ex.rest}s rest</div>}
+            </div>
+            {isGym&&<div style={{fontSize:14,fontWeight:700,color:comp?'#27ae60':'#888',minWidth:40,textAlign:'right'}}>{done}/{ex.sets}</div>}
+            <button onClick={()=>setShowTip(tipOpen?null:ex.id)} style={{background:'none',border:`1px solid ${tipOpen?'#e74c3c':'#222'}`,borderRadius:6,color:tipOpen?'#e74c3c':'#444',padding:'3px 7px',cursor:'pointer',fontSize:10,...S}}>?</button>
+          </div>
+          {tipOpen&&<div style={{padding:'0 14px 12px 48px'}}><div style={{fontSize:11,color:'#999',lineHeight:1.6,background:'#0d0d0d',padding:'10px 12px',borderRadius:8,borderLeft:`2px solid ${c}`}}>{ex.tip}</div></div>}
+          {done>0&&isGym&&<div style={{padding:'0 14px 8px 48px',display:'flex',flexWrap:'wrap',gap:4}}>{sFor(ex.id).map(s=>(<span key={s.id} onClick={()=>del(s.id)} style={{fontSize:10,padding:'3px 8px',borderRadius:4,background:'#1a1a1a',color:'#888',cursor:'pointer',border:'1px solid #222'}}>{s.weight>0?`${s.weight}kg×`:''}{s.reps} <span style={{color:'#333',marginLeft:3}}>✕</span></span>))}</div>}
+          {open&&isGym&&<div style={{padding:'0 14px 14px',display:'flex',gap:8,alignItems:'flex-end'}}>
+            <div style={{flex:1}}><label style={{fontSize:9,color:'#444',letterSpacing:1,display:'block',marginBottom:3}}>KG</label><input type="number" value={weight} onChange={e=>setWeight(e.target.value)} placeholder="0" autoFocus style={{width:'100%',padding:'9px 8px',background:'#0a0a0a',border:'1px solid #222',borderRadius:6,color:'#fff',fontSize:15,...S,boxSizing:'border-box'}}/></div>
+            <div style={{flex:1}}><label style={{fontSize:9,color:'#444',letterSpacing:1,display:'block',marginBottom:3}}>REPS</label><input type="number" value={reps} onChange={e=>setReps(e.target.value)} placeholder={ex.reps} style={{width:'100%',padding:'9px 8px',background:'#0a0a0a',border:'1px solid #222',borderRadius:6,color:'#fff',fontSize:15,...S,boxSizing:'border-box'}}/></div>
+            <button onClick={()=>logSet(ex.id)} style={{padding:'9px 16px',background:'#e74c3c',border:'none',borderRadius:6,color:'#fff',fontWeight:700,fontSize:12,cursor:'pointer',...S,letterSpacing:1,whiteSpace:'nowrap'}}>LOG</button>
+          </div>}
+          {!isGym&&!comp&&<div style={{padding:'0 14px 12px 48px'}}>{sFor(ex.id).length===0?<button onClick={()=>logSet(ex.id)} style={{padding:'8px 16px',background:'#1a1a1a',border:'1px solid #222',borderRadius:6,color:'#888',fontSize:11,cursor:'pointer',...S}}>Mark Complete ✓</button>:<span style={{fontSize:11,color:'#27ae60'}}>✓ Done</span>}</div>}
+        </div>);
+      })}
+
+      {/* Log view */}
+      {view==='log'&&isGym&&<div style={{display:'flex',flexDirection:'column',gap:6}}>
+        {daySets.length===0&&<div style={{textAlign:'center',padding:40,color:'#333',fontSize:12}}>No sets logged yet</div>}
+        {daySets.map((s,i)=>{const ex=day.exercises.find(e=>e.id===s.exercise);const c=MC[ex?.muscle]||'#555';return(
+          <div key={s.id} style={{display:'flex',alignItems:'center',gap:10,padding:'10px 14px',background:'#111',borderRadius:8,borderLeft:`3px solid ${c}`}}>
+            <span style={{fontSize:14}}>{ICONS[ex?.muscle]||'•'}</span><div style={{flex:1}}><div style={{fontSize:12,fontWeight:600,color:'#ddd'}}>{ex?.name}</div><div style={{fontSize:10,color:'#666',marginTop:1}}>{s.weight>0?`${s.weight}kg × `:''}{s.reps} reps</div></div>
+            <div style={{fontSize:10,color:'#333'}}>#{i+1}</div><button onClick={()=>del(s.id)} style={{background:'none',border:'none',color:'#333',cursor:'pointer',fontSize:13}}>✕</button>
+          </div>);})}
+      </div>}
+
+      {/* Summary view */}
+      {view==='summary'&&isGym&&<div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8,marginBottom:16}}>{[{l:'SETS',v:daySets.length},{l:'VOLUME',v:`${vol}kg`},{l:'DONE',v:`${pct}%`}].map(s=>(<div key={s.l} style={{padding:'14px 10px',background:'#111',borderRadius:8,textAlign:'center'}}><div style={{fontSize:20,fontWeight:700,color:'#fff'}}>{s.v}</div><div style={{fontSize:9,color:'#555',letterSpacing:2,marginTop:3}}>{s.l}</div></div>))}</div>
+        <div style={{fontSize:10,color:'#444',letterSpacing:2,marginBottom:8}}>BY EXERCISE</div>
+        {Object.entries(daySets.reduce((a,s)=>{(a[s.exercise]=a[s.exercise]||[]).push(s);return a;},{})).map(([exId,exSets])=>{const ex=day.exercises.find(e=>e.id===exId);const best=exSets.reduce((b,s)=>((parseFloat(s.weight)||0)*(parseInt(s.reps)||0)>(parseFloat(b.weight)||0)*(parseInt(b.reps)||0)?s:b),exSets[0]);const c=MC[ex?.muscle]||'#555';return(
+          <div key={exId} style={{padding:'12px 14px',background:'#111',borderRadius:8,marginBottom:6,borderLeft:`3px solid ${c}`,display:'flex',justifyContent:'space-between',alignItems:'center'}}><span style={{fontSize:12,fontWeight:600,color:'#ddd'}}>{ICONS[ex?.muscle]} {ex?.name} <span style={{color:'#444',fontWeight:400,fontSize:11}}>{exSets.length}s</span></span><span style={{fontSize:11,color:'#888'}}>Best: {best.weight>0?`${best.weight}kg×`:''}{best.reps}</span></div>);})}
+      </div>}
+
+      {/* Motivation */}
+      {mot&&isGym&&<div style={{marginTop:16,padding:'14px 16px',borderRadius:10,background:pct===100?'linear-gradient(135deg,#0d1a0d,#1a2a1a)':'#111',border:`1px solid ${pct===100?'#27ae6033':'#1a1a1a'}`}}>
+        <div style={{fontSize:10,color:pct===100?'#27ae60':pct>=70?'#e67e22':'#e67e22',letterSpacing:2,marginBottom:4}}>{pct===100?'SESSION COMPLETE':pct>=70?'SOLID EFFORT':pct>=40?'KEEP SHOWING UP':'EVERY REP COUNTS'}</div>
+        <div style={{fontSize:11,color:'#999',lineHeight:1.7}}>{mot}</div>
+      </div>}
+      {!isGym&&daySets.length>0&&<div style={{marginTop:16,padding:'14px 16px',borderRadius:10,background:'linear-gradient(135deg,#0d1a0d,#1a2a1a)',border:'1px solid #27ae6033'}}>
+        <div style={{fontSize:10,color:'#27ae60',letterSpacing:2,marginBottom:4}}>DONE FOR THE DAY</div>
+        <div style={{fontSize:11,color:'#999',lineHeight:1.7}}>{activeDay==='mon_pm'?'Soccer done. Eat protein + carbs for tomorrow.':activeDay==='wed'?'Intervals done. Refuel with carbs.':activeDay==='thu'?'Climbing done. Omega-3s and protein tonight.':'Active day ticked off. Rest up for the week ahead.'}</div>
+      </div>}
+
+      {/* Progression rule */}
+      <div style={{marginTop:12,padding:'12px 14px',background:'#0d1117',borderRadius:10,border:'1px solid #e74c3c22'}}>
+        <div style={{fontSize:10,color:'#e74c3c',letterSpacing:2,marginBottom:6}}>PROGRESSION RULE</div>
+        <div style={{fontSize:11,color:'#888',lineHeight:1.6}}>Hit the <span style={{color:'#fff'}}>top of the rep range</span> across all sets? Go up <span style={{color:'#fff'}}>2-4kg</span> next session. Deload every 4-5 weeks.</div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════
+// NUTRITION TRACKER COMPONENT
+// ═══════════════════════════════════════════
+const N_TYPES=[
+  {id:'strength',label:'Gym Day',icon:'🏋️',cm:5,pm:2.0,fm:.9},
+  {id:'double',label:'Gym + Soccer',icon:'⚽',cm:6,pm:2.2,fm:.9},
+  {id:'cardio',label:'Run / Intervals',icon:'🏃',cm:5.5,pm:1.8,fm:.85},
+  {id:'climb',label:'Climb Day',icon:'🧗',cm:4.5,pm:2.0,fm:.9},
+  {id:'rest',label:'Rest Day',icon:'😴',cm:3.5,pm:2.0,fm:1.0},
+];
+const MEAL_SLOTS=[
+  {id:'breakfast',label:'Breakfast',time:'7-8am',icon:'🌅'},
+  {id:'pre',label:'Pre-Workout',time:'1-2hrs before',icon:'⚡'},
+  {id:'post',label:'Post-Workout',time:'Within 1hr',icon:'🔄'},
+  {id:'lunch',label:'Lunch',time:'12-1pm',icon:'☀️'},
+  {id:'dinner',label:'Dinner',time:'6-7pm',icon:'🌙'},
+  {id:'snack',label:'Snacks',time:'Anytime',icon:'🥜'},
+];
+const DEFAULT_FOODS=[
+  {name:'Chicken Breast (200g)',p:46,c:0,f:3,cal:220},{name:'Salmon (180g)',p:36,c:0,f:14,cal:280},
+  {name:'Eggs × 3',p:18,c:1,f:15,cal:210},{name:'Greek Yoghurt (200g)',p:20,c:8,f:10,cal:200},
+  {name:'Whey Shake',p:25,c:3,f:1,cal:120},{name:'Oats (80g)',p:11,c:54,f:7,cal:304},
+  {name:'Rice (200g cooked)',p:4,c:44,f:0,cal:240},{name:'Sweet Potato (250g)',p:4,c:50,f:0,cal:215},
+  {name:'Banana',p:1,c:27,f:0,cal:105},{name:'Pasta (200g cooked)',p:7,c:50,f:1,cal:262},
+  {name:'Bread × 2 slices',p:7,c:26,f:2,cal:150},{name:'Avocado (½)',p:2,c:6,f:15,cal:160},
+  {name:'Peanut Butter (2 tbsp)',p:7,c:6,f:16,cal:190},{name:'Beef Mince (200g)',p:40,c:0,f:20,cal:340},
+  {name:'Tuna Can (95g)',p:20,c:0,f:1,cal:90},{name:'Mixed Nuts (40g)',p:6,c:6,f:20,cal:230},
+  {name:'Broccoli (200g)',p:6,c:14,f:0,cal:68},{name:'Olive Oil (1 tbsp)',p:0,c:0,f:14,cal:120},
+  {name:'Protein Bar',p:20,c:22,f:8,cal:220},{name:'Milk (300ml)',p:10,c:15,f:10,cal:186},
+];
+const MIDEAS={
+  strength:{breakfast:'Oats + whey + banana + PB — 40g protein',pre:'Toast + honey + banana 90min before',post:'Whey + banana immediately. Full meal within 1hr',lunch:'Chicken + rice + broccoli',dinner:'Salmon + sweet potato + greens',snack:'Greek yoghurt + nuts OR protein bar'},
+  double:{breakfast:'Big oat bowl + eggs — energy for two sessions',pre:'Toast + honey + banana before soccer',post:'Whey + banana after gym. Second meal after soccer',lunch:'Large chicken wrap + rice + avocado',dinner:'Beef mince pasta — carb + protein reload',snack:'PB toast, fruit, nuts between sessions'},
+  cardio:{breakfast:'Oats + banana + honey — carb-forward',pre:'Toast + honey 90min before',post:'Whey + fruit smoothie — replenish glycogen',lunch:'Chicken + pasta + veg',dinner:'Fish + sweet potato + salad',snack:'Fruit + yoghurt'},
+  climb:{breakfast:'Eggs + toast + avocado — steady energy',pre:'Banana + small handful nuts 1hr before',post:'Whey + rice cakes',lunch:'Chicken + rice + veg',dinner:'Salmon + quinoa + greens — omega-3s for tendons',snack:'Greek yoghurt or protein bar'},
+  rest:{breakfast:'Eggs + avocado toast — lower carb, higher fat',pre:'N/A',post:'N/A',lunch:'Big salad + chicken + olive oil + sweet potato',dinner:'Beef + veg + rice',snack:'Nuts, yoghurt, fruit'},
+};
+
+function NutritionTracker() {
+  const [bw, setBw] = useLS('nut_weight', 85);
+  const [dayType, setDayType] = useDailyLS('nut_dayType', 'strength');
+  const [logged, setLogged] = useDailyLS('nut_logged', []);
+  const [yetis, setYetis] = useDailyLS('nut_yetis', 0);
+  const [customFoods, setCustomFoods] = useLS('nut_custom_foods', []);
+  const [savedMeals, setSavedMeals] = useLS('nut_saved_meals', []);
+  const [view, setView] = useState('track');
+  const [addingTo, setAddingTo] = useState(null);
+  const [cn, setCn] = useState('');
+  const [cp, setCp] = useState('');
+  const [cc, setCc] = useState('');
+  const [cf, setCf] = useState('');
+  const [savingMeal, setSavingMeal] = useState(null);
+  const [mealName, setMealName] = useState('');
+
+  const dt = N_TYPES.find(d=>d.id===dayType);
+  const tgt = {protein:Math.round(bw*dt.pm),carbs:Math.round(bw*dt.cm),fat:Math.round(bw*dt.fm)};
+  tgt.cal = tgt.protein*4+tgt.carbs*4+tgt.fat*9;
+  const tot = logged.reduce((a,l)=>({p:a.p+l.p,c:a.c+l.c,f:a.f+l.f,cal:a.cal+l.cal}),{p:0,c:0,f:0,cal:0});
+  const yetiTarget = Math.ceil(bw*0.035); // ~3 for 85kg
+  const allFoods = [...DEFAULT_FOODS,...customFoods];
+
+  // Yesterday's data for repeat
+  const yesterday = new Date(Date.now()-86400000).toISOString().split('T')[0];
+  const yKey = 'nut_logged_'+yesterday;
+  let yesterdayLogged = [];
+  try{const y=localStorage.getItem(yKey);if(y)yesterdayLogged=JSON.parse(y);}catch{}
+
+  // Protein streak — check last 7 days
+  const streak = (() => {let s=0;for(let i=1;i<=7;i++){const d=new Date(Date.now()-i*86400000).toISOString().split('T')[0];try{const data=JSON.parse(localStorage.getItem('nut_logged_'+d)||'[]');const tp=data.reduce((a,l)=>a+l.p,0);if(tp>=tgt.protein*0.8)s++;else break;}catch{break;}}return s;})();
+
+  const addFood = (food,slot) => {setLogged(p=>[...p,{...food,id:Date.now(),slot}]);setAddingTo(null);};
+  const addCustomFood = slot => {if(!cn)return;const p=parseInt(cp)||0,c=parseInt(cc)||0,f=parseInt(cf)||0;const food={name:cn,p,c,f,cal:p*4+c*4+f*9};setCustomFoods(prev=>{if(prev.find(x=>x.name===cn))return prev;return[...prev,food];});addFood(food,slot);setCn('');setCp('');setCc('');setCf('');};
+  const del = id => setLogged(p=>p.filter(l=>l.id!==id));
+  const pctOf = (v,t) => Math.min(Math.round(v/t*100),100);
+
+  const repeatYesterday = slot => {const items=yesterdayLogged.filter(l=>l.slot===slot);items.forEach(item=>setLogged(p=>[...p,{...item,id:Date.now()+Math.random()}]));};
+  const saveMealCombo = slot => {if(!mealName)return;const items=logged.filter(l=>l.slot===slot).map(({name,p,c,f,cal})=>({name,p,c,f,cal}));if(items.length===0)return;setSavedMeals(prev=>[...prev,{id:Date.now(),name:mealName,slot,items}]);setSavingMeal(null);setMealName('');};
+  const loadSavedMeal = (meal,slot) => {meal.items.forEach(item=>setLogged(p=>[...p,{...item,id:Date.now()+Math.random(),slot}]));setAddingTo(null);};
+  const delSaved = id => setSavedMeals(p=>p.filter(m=>m.id!==id));
+  const delCustom = name => setCustomFoods(p=>p.filter(f=>f.name!==name));
+
+  const Bar = ({label,cur,tgt:t,color,unit}) => (
+    <div style={{marginBottom:10}}>
+      <div style={{display:'flex',justifyContent:'space-between',fontSize:11,marginBottom:3}}><span style={{color:'#888'}}>{label}</span><span style={{color:cur>=t?'#27ae60':'#fff'}}>{cur}<span style={{color:'#555'}}>/{t}{unit||'g'}</span></span></div>
+      <div style={{height:6,background:'#1a1a1a',borderRadius:3,overflow:'hidden'}}><div style={{height:'100%',width:`${pctOf(cur,t)}%`,background:cur>t*1.1?'#e74c3c':color,borderRadius:3,transition:'width .3s'}}/></div>
+    </div>
+  );
+
+  return (
+    <div style={{padding:'14px 12px',maxWidth:480,margin:'0 auto'}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:14}}>
+        <div><div style={{fontSize:10,letterSpacing:3,color:'#27ae60',textTransform:'uppercase',marginBottom:2}}>Hybrid Athlete Fuel</div><div style={{fontSize:20,fontWeight:700,color:'#fff'}}>Nutrition</div></div>
+        {streak>0&&<div style={{textAlign:'right'}}><div style={{fontSize:16}}>🔥</div><div style={{fontSize:9,color:'#e67e22'}}>{streak} day streak</div></div>}
+      </div>
+
+      {/* Weight + day type */}
+      <div style={{display:'flex',gap:10,marginBottom:14}}>
+        <div style={{flex:'0 0 72px'}}><label style={{fontSize:9,color:'#444',letterSpacing:1,display:'block',marginBottom:3}}>KG</label><input type="number" value={bw} onChange={e=>setBw(parseInt(e.target.value)||0)} style={{width:'100%',padding:8,background:'#111',border:'1px solid #222',borderRadius:6,color:'#fff',fontSize:14,...S,boxSizing:'border-box',textAlign:'center'}}/></div>
+        <div style={{flex:1}}><label style={{fontSize:9,color:'#444',letterSpacing:1,display:'block',marginBottom:3}}>TODAY</label>
+          <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>{N_TYPES.map(d=>(<button key={d.id} onClick={()=>setDayType(d.id)} style={{padding:'6px 8px',borderRadius:6,border:dayType===d.id?'1px solid #27ae6044':'1px solid #222',cursor:'pointer',...S,background:dayType===d.id?'#1a2a1a':'#111',color:dayType===d.id?'#27ae60':'#555',fontSize:10}}>{d.icon} {d.label}</button>))}</div>
+        </div>
+      </div>
+
+      {/* Macro dashboard */}
+      <div style={{padding:14,background:'#111',borderRadius:10,marginBottom:10,border:'1px solid #1a1a1a'}}>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:8,marginBottom:14}}>
+          {[{l:'CALS',v:tot.cal,t:tgt.cal},{l:'PROT',v:tot.p,t:tgt.protein},{l:'CARBS',v:tot.c,t:tgt.carbs},{l:'FAT',v:tot.f,t:tgt.fat}].map(s=>(
+            <div key={s.l} style={{textAlign:'center'}}><div style={{fontSize:16,fontWeight:700,color:s.v>=s.t?'#27ae60':'#fff'}}>{s.v}</div><div style={{fontSize:8,color:'#555'}}>/{s.t}</div><div style={{fontSize:8,color:'#444',letterSpacing:1,marginTop:2}}>{s.l}</div></div>
+          ))}
+        </div>
+        <Bar label="Protein" cur={tot.p} tgt={tgt.protein} color="#e74c3c"/>
+        <Bar label="Carbs" cur={tot.c} tgt={tgt.carbs} color="#3498db"/>
+        <Bar label="Fat" cur={tot.f} tgt={tgt.fat} color="#9b59b6"/>
+      </div>
+
+      {/* Yeti bottles */}
+      <div style={{padding:'12px 14px',background:'#111',borderRadius:10,marginBottom:14,border:'1px solid #1a1a1a'}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+          <span style={{fontSize:11,color:'#888'}}>Yeti Bottles <span style={{color:yetis>=yetiTarget?'#27ae60':'#fff'}}>{yetis}</span><span style={{color:'#555'}}>/{yetiTarget}</span></span>
+          <div style={{display:'flex',gap:6}}>
+            <button onClick={()=>setYetis(y=>Math.max(0,y-1))} style={{width:32,height:32,borderRadius:8,background:'#0a0a0a',border:'1px solid #222',color:'#888',fontSize:16,cursor:'pointer',...S}}>−</button>
+            <button onClick={()=>setYetis(y=>y+1)} style={{width:32,height:32,borderRadius:8,background:yetis>=yetiTarget?'#27ae60':'#3498db',border:'none',color:'#fff',fontSize:16,cursor:'pointer',...S}}>+</button>
+          </div>
+        </div>
+        <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
+          {Array.from({length:yetiTarget}).map((_,i)=>(
+            <div key={i} style={{fontSize:20,opacity:i<yetis?1:.2,transition:'opacity .3s',cursor:'pointer'}} onClick={()=>setYetis(i+1)}>🥤</div>
+          ))}
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div style={{display:'flex',marginBottom:14,borderBottom:'1px solid #1a1a1a'}}>{[['track','Log'],['meals','Ideas'],['saved','Saved']].map(([k,l])=>(<button key={k} onClick={()=>setView(k)} style={{flex:1,padding:'8px 0',background:'none',border:'none',...S,color:view===k?'#fff':'#444',fontSize:10,letterSpacing:2,textTransform:'uppercase',cursor:'pointer',borderBottom:view===k?'2px solid #27ae60':'2px solid transparent'}}>{l}</button>))}</div>
+
+      {/* ═══ LOG VIEW ═══ */}
+      {view==='track'&&MEAL_SLOTS.filter(s=>!(dayType==='rest'&&(s.id==='pre'||s.id==='post'))).map(slot=>{
+        const items=logged.filter(l=>l.slot===slot.id);const sp=items.reduce((s,l)=>s+l.p,0);const isA=addingTo===slot.id;
+        const proteinHit=sp>=30;const yesterdayHas=yesterdayLogged.filter(l=>l.slot===slot.id).length>0;
+        const slotSaved=savedMeals.filter(m=>m.slot===slot.id||m.slot==='any');
+        return(<div key={slot.id} style={{marginBottom:8,background:'#111',borderRadius:10,overflow:'hidden',border:'1px solid #1a1a1a'}}>
+          <div onClick={()=>setAddingTo(isA?null:slot.id)} style={{padding:'12px 14px',cursor:'pointer',display:'flex',alignItems:'center',gap:10}}>
+            <span style={{fontSize:18}}>{slot.icon}</span>
+            <div style={{flex:1}}><div style={{fontSize:13,fontWeight:600,color:'#ddd'}}>{slot.label}</div><div style={{fontSize:10,color:'#555'}}>{slot.time}</div></div>
+            {sp>0&&<span style={{fontSize:10,color:proteinHit?'#27ae60':'#e74c3c',background:proteinHit?'#27ae6022':'#e74c3c22',padding:'2px 8px',borderRadius:10}}>{proteinHit?'✓':''} {sp}g prot</span>}
+            <span style={{color:'#333',fontSize:12}}>{isA?'▲':'▼'}</span>
+          </div>
+          {items.length>0&&<div style={{padding:'0 14px 6px 48px'}}>{items.map(item=>(
+            <div key={item.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'3px 0',borderBottom:'1px solid #1a1a1a'}}>
+              <span style={{fontSize:11,color:'#999'}}>{item.name}</span><div style={{display:'flex',alignItems:'center',gap:6}}><span style={{fontSize:9,color:'#555'}}>P{item.p} C{item.c} F{item.f}</span><button onClick={()=>del(item.id)} style={{background:'none',border:'none',color:'#333',cursor:'pointer',fontSize:11}}>✕</button></div>
+            </div>))}{savingMeal===slot.id?<div style={{display:'flex',gap:6,marginTop:6}}><input value={mealName} onChange={e=>setMealName(e.target.value)} placeholder="Meal name" autoFocus style={{flex:1,padding:6,background:'#0a0a0a',border:'1px solid #222',borderRadius:6,color:'#fff',fontSize:11,...S,boxSizing:'border-box'}}/><button onClick={()=>saveMealCombo(slot.id)} style={{padding:'6px 10px',background:'#27ae60',border:'none',borderRadius:6,color:'#fff',fontSize:10,cursor:'pointer',...S}}>Save</button></div>:<button onClick={()=>setSavingMeal(slot.id)} style={{marginTop:4,background:'none',border:'none',color:'#444',fontSize:10,cursor:'pointer',...S}}>💾 Save as combo</button>}</div>}
+          {isA&&<div style={{padding:'0 14px 14px'}}>
+            <div style={{fontSize:10,color:'#27ae60',background:'#0d1a0d',padding:'8px 10px',borderRadius:6,marginBottom:8,lineHeight:1.5,borderLeft:'2px solid #27ae6044'}}>💡 {MIDEAS[dayType]?.[slot.id]||'Log your food'}</div>
+            {/* Quick actions */}
+            <div style={{display:'flex',gap:6,marginBottom:8}}>
+              {yesterdayHas&&<button onClick={()=>repeatYesterday(slot.id)} style={{flex:1,padding:'8px',background:'#0d1117',border:'1px solid #3498db33',borderRadius:6,color:'#3498db',fontSize:10,cursor:'pointer',...S}}>🔄 Repeat yesterday</button>}
+              {slotSaved.map(m=>(<button key={m.id} onClick={()=>loadSavedMeal(m,slot.id)} style={{flex:1,padding:'8px',background:'#0d1117',border:'1px solid #27ae6033',borderRadius:6,color:'#27ae60',fontSize:10,cursor:'pointer',...S}}>⚡ {m.name}</button>))}
+            </div>
+            {/* Quick-add foods — always visible */}
+            <div style={{maxHeight:180,overflowY:'auto',marginBottom:8,borderRadius:6,border:'1px solid #1a1a1a'}}>
+              {allFoods.map((f,i)=>(<button key={i} onClick={()=>addFood(f,slot.id)} style={{width:'100%',padding:'8px 10px',background:i%2?'#0d0d0d':'#0a0a0a',border:'none',cursor:'pointer',textAlign:'left',display:'flex',justifyContent:'space-between',alignItems:'center'}}><span style={{fontSize:11,color:'#ccc'}}>{f.name}</span><span style={{fontSize:9,color:'#555'}}>P{f.p} C{f.c} F{f.f}</span></button>))}
+            </div>
+            {/* Custom entry */}
+            <div style={{fontSize:9,color:'#444',letterSpacing:1,marginBottom:4}}>ADD NEW FOOD (saves permanently)</div>
+            <input value={cn} onChange={e=>setCn(e.target.value)} placeholder="Food name" style={{width:'100%',padding:7,background:'#0a0a0a',border:'1px solid #222',borderRadius:6,color:'#fff',fontSize:11,...S,boxSizing:'border-box',marginBottom:4}}/>
+            <div style={{display:'flex',gap:4}}>{[['P',cp,setCp,'#e74c3c'],['C',cc,setCc,'#3498db'],['F',cf,setCf,'#9b59b6']].map(([l,v,fn,col])=>(<div key={l} style={{flex:1}}><label style={{fontSize:8,color:col,display:'block',marginBottom:2}}>{l}</label><input type="number" value={v} onChange={e=>fn(e.target.value)} placeholder="0" style={{width:'100%',padding:6,background:'#0a0a0a',border:'1px solid #222',borderRadius:6,color:'#fff',fontSize:11,...S,boxSizing:'border-box'}}/></div>))}<button onClick={()=>addCustomFood(slot.id)} style={{padding:'6px 12px',background:'#27ae60',border:'none',borderRadius:6,color:'#fff',fontWeight:700,fontSize:10,cursor:'pointer',...S,alignSelf:'flex-end'}}>+</button></div>
+          </div>}
+        </div>);
+      })}
+
+      {/* ═══ MEAL IDEAS ═══ */}
+      {view==='meals'&&<div>
+        <div style={{fontSize:11,color:'#888',marginBottom:12,lineHeight:1.6}}>Meals for <span style={{color:'#27ae60'}}>{dt.label}</span>. Aim for <span style={{color:'#e74c3c'}}>30-40g protein</span> per meal.</div>
+        {MEAL_SLOTS.filter(s=>!(dayType==='rest'&&(s.id==='pre'||s.id==='post'))).map(slot=>(
+          <div key={slot.id} style={{padding:'12px 14px',background:'#111',borderRadius:10,marginBottom:8,borderLeft:'3px solid #27ae6044'}}>
+            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}><span style={{fontSize:16}}>{slot.icon}</span><span style={{fontSize:12,fontWeight:600,color:'#ddd'}}>{slot.label}</span></div>
+            <div style={{fontSize:11,color:'#999',lineHeight:1.6}}>{MIDEAS[dayType]?.[slot.id]}</div>
+          </div>
+        ))}
+        <div style={{marginTop:16,padding:14,background:'#0d1117',borderRadius:10,border:'1px solid #27ae6022'}}>
+          <div style={{fontSize:10,color:'#27ae60',letterSpacing:2,marginBottom:8}}>TARGETS BY DAY TYPE</div>
+          {N_TYPES.map(d=>{const p=Math.round(bw*d.pm),c=Math.round(bw*d.cm),f=Math.round(bw*d.fm);return(
+            <div key={d.id} style={{display:'flex',justifyContent:'space-between',padding:'8px 0',borderBottom:'1px solid #1a1a1a'}}><span style={{fontSize:11,color:dayType===d.id?'#27ae60':'#888'}}>{d.icon} {d.label}</span><span style={{fontSize:10,color:'#555'}}>P{p} C{c} F{f} · {p*4+c*4+f*9}cal</span></div>
+          );})}
+        </div>
+      </div>}
+
+      {/* ═══ SAVED MEALS & CUSTOM FOODS ═══ */}
+      {view==='saved'&&<div>
+        <div style={{fontSize:10,color:'#444',letterSpacing:2,marginBottom:10}}>SAVED MEAL COMBOS</div>
+        {savedMeals.length===0&&<div style={{padding:20,textAlign:'center',color:'#333',fontSize:11}}>No saved combos yet. Log a meal, then tap "Save as combo" to save it for one-tap logging.</div>}
+        {savedMeals.map(m=>{const tp=m.items.reduce((s,i)=>s+i.p,0);const tc=m.items.reduce((s,i)=>s+i.c,0);const tf=m.items.reduce((s,i)=>s+i.f,0);return(
+          <div key={m.id} style={{padding:'12px 14px',background:'#111',borderRadius:10,marginBottom:6,border:'1px solid #1a1a1a'}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
+              <span style={{fontSize:13,fontWeight:600,color:'#ddd'}}>⚡ {m.name}</span>
+              <button onClick={()=>delSaved(m.id)} style={{background:'none',border:'none',color:'#333',cursor:'pointer',fontSize:12}}>✕</button>
+            </div>
+            <div style={{fontSize:10,color:'#888',marginBottom:4}}>{m.items.map(i=>i.name).join(', ')}</div>
+            <div style={{fontSize:10,color:'#555'}}>P{tp} C{tc} F{tf} · {tp*4+tc*4+tf*9}cal</div>
+          </div>
+        );})}
+        <div style={{fontSize:10,color:'#444',letterSpacing:2,marginBottom:10,marginTop:20}}>MY CUSTOM FOODS</div>
+        {customFoods.length===0&&<div style={{padding:20,textAlign:'center',color:'#333',fontSize:11}}>No custom foods yet. Add one via "Add New Food" when logging — it'll save here permanently.</div>}
+        {customFoods.map(f=>(
+          <div key={f.name} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 14px',background:'#111',borderRadius:8,marginBottom:4,border:'1px solid #1a1a1a'}}>
+            <span style={{fontSize:11,color:'#ccc'}}>{f.name}</span>
+            <div style={{display:'flex',alignItems:'center',gap:8}}><span style={{fontSize:9,color:'#555'}}>P{f.p} C{f.c} F{f.f}</span><button onClick={()=>delCustom(f.name)} style={{background:'none',border:'none',color:'#333',cursor:'pointer',fontSize:11}}>✕</button></div>
+          </div>
+        ))}
+      </div>}
+
+      <div style={{marginTop:20,padding:'10px 14px',borderTop:'1px solid #1a1a1a'}}><div style={{fontSize:9,color:'#333',lineHeight:1.6,textAlign:'center'}}>ISSN: 1.6-2.2g/kg protein · 4-7g/kg carbs · 30-40g protein per meal</div></div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════
+// APP SHELL — TAB SWITCHER
+// ═══════════════════════════════════════════
+function App() {
+  const [tab, setTab] = useLS('app_tab', 'gym');
+  return (
+    <div style={{minHeight:'100vh',background:'#0a0a0a',color:'#e8e8e8',...S}}>
+      {tab==='gym' ? <GymTracker/> : <NutritionTracker/>}
+      {/* Bottom tab bar */}
+      <div style={{position:'fixed',bottom:0,left:0,right:0,background:'#0a0a0a',borderTop:'1px solid #1a1a1a',display:'flex',padding:'8px 0 max(8px, env(safe-area-inset-bottom))',zIndex:100}}>
+        {[['gym','🏋️','Training'],['nutrition','🥗','Nutrition']].map(([id,icon,label])=>(
+          <button key={id} onClick={()=>setTab(id)} style={{flex:1,background:'none',border:'none',cursor:'pointer',...S,textAlign:'center',padding:'4px 0'}}>
+            <div style={{fontSize:20}}>{icon}</div>
+            <div style={{fontSize:9,color:tab===id?'#e74c3c':'#444',letterSpacing:1,marginTop:2}}>{label}</div>
+          </button>
+        ))}
+      </div>
+      <div style={{height:70}}/>
+    </div>
+  );
+}
+
+ReactDOM.render(<App/>, document.getElementById('root'));
+  </script>
+</body>
+</html>
